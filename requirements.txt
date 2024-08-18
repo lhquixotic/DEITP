@@ -1,0 +1,5 @@
+easydict
+networkx
+quadprog==0.1.11
+scikit-learn
+matplotlib
