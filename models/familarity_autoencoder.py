@@ -31,22 +31,24 @@ class GraphAutoEncoder(nn.Module):
         bn_mean = []
         bn_var = []
         for module in self.modules():
-            if isinstance(module, nn.BatchNorm1d):
+            if isinstance(module, nn.BatchNorm2d):
                 bn_mean.append(module.running_mean)
                 bn_var.append(module.running_var)
         saved_para = dict(state_dict=state_dict, bn_mean=bn_mean, bn_var=bn_var)
         torch.save(saved_para, save_path)
     
     def load_model(self, load_path):
-        saved_para = torch.load(load_path)
+        saved_para = torch.load(load_path, map_location=get_device())
         state_dict = saved_para['state_dict']
         bn_mean = saved_para['bn_mean']
         bn_var = saved_para['bn_var']
         self.load_state_dict(state_dict)
+        n = 0
         for module in self.modules():
-            if isinstance(module, nn.BatchNorm1d):
-                module.running_mean = bn_mean
-                module.running_var = bn_var
+            if isinstance(module, nn.BatchNorm2d):
+                module.running_mean = bn_mean[n].to(get_device())
+                module.running_var = bn_var[n].to(get_device())
+                n += 1
         
 def train(model, optimizer, train_loader, batch_size=64):
     

@@ -62,7 +62,7 @@ class social_stgcnn_dem(social_stgcnn_pnn):
             recon_loss = loss_func(recon,v)
             case_recon_res[fid] = recon_loss.item()
         # select the expert with the minimum reconstruction loss
-        print("Recon_res: {}".format(case_recon_res))
+        # print("Recon_res: {}".format(case_recon_res))
         task_id = np.argmin(case_recon_res)
         expert_id = self.select_expert(task_id)
         # print("[Task detector] Selected expert id: {} for task id: {}.".format(expert_id, task_id))

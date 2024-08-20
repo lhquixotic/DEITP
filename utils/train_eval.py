@@ -257,7 +257,9 @@ def task_test(model, expert_id, test_loader, args):
     eval_fde = np.zeros((test_times,test_case_num))
     for i in range(test_times):
         if args.deterministic:
-            set_seeds(args.seed+i)
+            # set_seeds(args.seed+i)
+            set_seeds(args.seed)
+
         dataloader = test_loader
         for idx, case in enumerate(dataloader):
             if idx >= test_case_num:

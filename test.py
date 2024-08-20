@@ -19,6 +19,9 @@ from models.social_stgcnn_dem import social_stgcnn_dem
 
 def main(args):
     # Load data
+    if args.test_all_tasks: 
+        args.datasets_split_num = 2
+        args.task_seq="1-2-3-4-5"
     scenarios = get_continual_scenario_benchmark(args)
     task_ids = [int(tid) for tid in args.task_seq.split('-')]
     task_ids = task_ids + [tid + 5*(args.datasets_split_num-1) for tid in task_ids] 
@@ -39,19 +42,35 @@ def main(args):
 
     # Predict tasks
     if args.task_predict:
-        ckpt_name = "./logs/DEM/{}/checkpoint/checkpoint_task_{}.pth".format(args.experiment_name, task_ids[-1]-1)
-        print("Loading trained DEM model from {}...".format(ckpt_name))
-        dem = load_trained_dem(args, ckpt_name=ckpt_name)
+        if args.test_all_tasks:
+            
+            for i in range(0,10):
+                eval_save_path = "./logs/DEITP-FAE/{}/evaluation/task_{}".format(args.experiment_name, i)
+                os.makedirs(eval_save_path, exist_ok=True)
+                ckpt_name = "./logs/DEM/experiment/checkpoint/checkpoint_task_{}.pth".format(i)
+                print("Loading trained DEM model from {}...".format(ckpt_name))
+                dem = load_trained_dem(args, ckpt_name=ckpt_name) 
+                if args.task_free:
+                    detect_result = task_detect(args, faes[:i+1], scenarios, device=get_device(),dem=dem, end_task_id=i, save_path=eval_save_path)
+                    
+        else:
+            ckpt_name = "./logs/DEM/experiment/checkpoint/checkpoint_task_{}.pth".format(task_ids[-1]-1)
+            print("Loading trained DEM model from {}...".format(ckpt_name))
+            dem = load_trained_dem(args, ckpt_name=ckpt_name) 
 
-        predict_result = task_predict(args, dem, scenarios, device=get_device(), task_free=args.task_free, faes=faes, detect_result=detect_result if args.task_detect else None)
+            if args.task_free:
+                detect_result = task_detect(args, faes, scenarios, device=get_device(),dem=dem)
+            else:
+                predict_result = task_predict(args, dem, scenarios, device=get_device(), task_free=args.task_free, faes=faes, detect_result=detect_result if args.task_detect else None)
 
 def load_faes(args, task_ids):
     print("Loading Familiarity Autoencoder models for task ids: {}...".format(task_ids))
     faes = []
     for tid in task_ids:
         fae = GraphAutoEncoder(seq_len=args.obs_seq_len, latent_dim=args.latent_dim)
-        loaded = torch.load("./logs/task_detector/{}/checkpoint/FAE_task_{}.pth".format(args.experiment_name, tid - 1),map_location=torch.device('cpu'))
-        fae.load_state_dict(loaded)
+        # loaded = torch.load("./logs/task_detector/{}/checkpoint/FAE_task_{}.pth".format(args.experiment_name, tid - 1),map_location=torch.device('cpu'))
+        # fae.load_state_dict(loaded)
+        fae.load_model("./logs/task_detector/{}/checkpoint/FAE_task_{}.pth".format(args.experiment_name, tid - 1))
         faes.append(fae)
         print('Loaded FAE for task {}.'.format(tid))
     return faes
@@ -79,7 +98,7 @@ def load_previous_knowledge(model, task_id, ckpt_name=None):
     return model
 
 def load_best_model(model, task_id, ckpt_name=None):
-    root_path = "./logs/DEM/result"
+    root_path = "./logs/DEM/experiment"
     ckpt_fname = root_path+'/checkpoint/checkpoint_task_{}.pth'.format(task_id) if ckpt_name is None else ckpt_name
     assert os.path.exists(ckpt_fname), "No checkpoint named {}".format(ckpt_fname)
     checkpoint = torch.load(ckpt_fname, map_location=torch.device('cpu'))
@@ -101,22 +120,38 @@ def load_trained_dem(args, ckpt_name=None):
         dem.set_task_detector(use_task_detector=True, latent_dim=args.latent_dim)
     else:
         dem.set_task_detector(use_task_detector=False)
-    ckpt_name = "./logs/checkpoint_task_9.pth" if ckpt_name is None else ckpt_name
-    dem = load_previous_knowledge(dem,9,ckpt_name=ckpt_name) 
-    expand_times = len(dem.expert_selector) - len(dem.columns)
+
+    expert_selector = torch.load(ckpt_name, map_location=torch.device(get_device()))["expert_selector"]
+
+    # ckpt_name = "./logs/checkpoint_task_9.pth" if ckpt_name is None else ckpt_name
+    # dem = load_previous_knowledge(dem,9,ckpt_name=ckpt_name) 
+    expand_times = len(list(expert_selector.keys())) - len(dem.columns)
     for t in range(expand_times):
         dem.add_column()
+
     dem = load_best_model(dem, 9, ckpt_name=ckpt_name)
     return dem
 
-def task_detect(args, models, scenarios, device):
-    expert_dict = {0:[0,5],1:[1,6],2:[2,7],3:[3,4,8,9]}
-    print("Start detecting tasks...")
+def task_detect(args, models, scenarios, device, dem=None, end_task_id=None,save_path=None):
+    expert_dict = {0:[0,5],1:[1,6],2:[2,7],3:[3,4,8,9]} if dem is None else dem.expert_selector
+    print("Start detecting tasks 0-{}...".format(end_task_id if end_task_id is not None else len(scenarios.test_stream)))
+    print("expert_dict:", expert_dict)
     class_num = len(models)
     all_detect_result = []
     loss_func = nn.MSELoss()
+    if dem is not None:
+        dem.eval()
+        dem.set_task_detector(use_task_detector=False)
+        task_ade = np.zeros(args.test_case_num)
+        task_fde = np.zeros(args.test_case_num)
+
     for tid, test_task in enumerate(scenarios.test_stream):
+        if end_task_id is not None and tid > end_task_id: break
         detect_result_list = []
+        if dem is not None:
+            ade_list, fde_list = [],[]
+            true_ade_list, true_fde_list = [],[]
+
         test_loader = get_dataloader(test_task, False)
         for case_id, case in enumerate(test_loader):
             if case_id >= args.test_case_num: break
@@ -129,9 +164,33 @@ def task_detect(args, models, scenarios, device):
                 _, recon = model(V_target, A_target)
                 recon_loss = loss_func(recon, V_target)
                 case_res[mid] = recon_loss.item()
-            print("Recon res:", case_res)
-            detect_result_list.append(np.argmin(case_res))
-        # print(f"[Task {tid}] detect result: {np.bincount(detect_result_list, minlength=class_num)}")
+            # print("Recon res:", case_res)
+            detect_tid = np.argmin(case_res)
+            if dem is not None:
+                for eid, tids in expert_dict.items():
+                    if detect_tid in tids:
+                        detect_eid = eid
+                    if tid in tids:
+                        true_eid = eid
+                dem.load_batch_norm_para(detect_eid)
+                case_ade, case_fde = eval_case(case, dem, detect_eid)
+                # print(f"Task {tid}, case {case_id}, Detected as task {detect_tid},  expert {detect_eid}, ADE:{case_ade:.2f}, FDE:{case_fde:.2f}")
+                ade_list.append(case_ade)
+                fde_list.append(case_fde)
+                task_ade[case_id] = case_ade
+                task_fde[case_id] = case_fde
+
+                dem.load_batch_norm_para(true_eid)
+                true_case_ade, true_case_fde = eval_case(case, dem, true_eid)
+                # print(f"Task {tid}, case {case_id}, True expert {true_eid}, ADE:{true_case_ade:.2f}, FDE:{true_case_fde:.2f}")
+                true_ade_list.append(true_case_ade)
+                true_fde_list.append(true_case_fde)
+
+            detect_result_list.append(detect_tid)
+
+        np.save(os.path.join(save_path, f"ADE-task-{tid}-exp-0.npy"), task_ade)
+        np.save(os.path.join(save_path, f"FDE-task-{tid}-exp-0.npy"), task_fde)
+        print("Mean ADE: {:.2f}, Mean FDE: {:.2f}".format(np.mean(task_ade), np.mean(task_fde)))
         detect_res = np.bincount(detect_result_list, minlength=class_num)
         all_detect_result.append(detect_res)
         expert_detect_result = []
@@ -141,6 +200,9 @@ def task_detect(args, models, scenarios, device):
                 detect_num += detect_res[ttid]
             expert_detect_result.append(detect_num)
         print(f"[Task {tid}] expert detect result: {expert_detect_result}")
+        if dem is not None:
+            print(f"[Task {tid}] ADE: {np.mean(ade_list)}, FDE: {np.mean(fde_list)}")
+            print(f"[Task {tid}] True ADE: {np.mean(true_ade_list)}, True FDE: {np.mean(true_fde_list)}")
     return all_detect_result
 
 def task_predict(args, model, scenarios, device, task_free=False, faes = None, detect_result=None):
@@ -238,6 +300,7 @@ if __name__ == '__main__':
     parser.add_argument('--task_free', type=int, default=1)
     parser.add_argument('--task_detect', type=int, default=0)
     parser.add_argument('--task_predict', type=int, default=1)
+    parser.add_argument('--test_all_tasks', type=int, default=0)
     args = parser.parse_args()
 
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
