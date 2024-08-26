@@ -28,10 +28,22 @@ We also propose a familiarity autoencdoer (FAE) based approach for task detectio
 bash scripts/train_fae.sh
 ```
 
-
-
-
 ### Testing
+The trained models can be tested by running the following commands. If you want to test the DEM model to predict on all tasks, run:
+```
+python test.py --task_detect 0 --task_free 0 --task_predict 1
+```
+
+If you want to test the approach to predict on all tasks in the TFCL setting, run:
+```
+python test.py --task_detect 0 --task_free 1 --task_predict 1
+```
+
+If you want merely to test task detection, run:
+```
+python test.py --task_detect 1 --task_free 0 --task_predict 0
+```
+
 
 ## Acknowledgement
 We sincerely appreciate the following github repos for their valuable code base we build upon:

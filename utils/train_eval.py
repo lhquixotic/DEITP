@@ -9,6 +9,8 @@ from torch.utils.data import DataLoader
 from utils.metrics import *
 from utils.utils import set_seeds
 
+import matplotlib.pyplot as plt
+
 def get_device() -> str:
     return 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -90,7 +92,7 @@ def eval_case(case, model,task_id=-1):
 
                 ade_ls[n].append(ade(pred,target,number_of))
                 fde_ls[n].append(fde(pred,target,number_of))
-        
+
         for n in range(num_of_objs):
             ade_bigls.append(min(ade_ls[n]))
             fde_bigls.append(min(fde_ls[n]))
